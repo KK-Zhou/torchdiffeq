@@ -12,7 +12,7 @@ parser.add_argument('--method', type=str, choices=['dopri5', 'adams'], default='
 parser.add_argument('--data_size', type=int, default=1000)
 parser.add_argument('--batch_time', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=20)
-parser.add_argument('--niters', type=int, default=2000)
+parser.add_argument('--niters', type=int, default=5000)
 parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
@@ -26,23 +26,30 @@ else:
 
 device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
 
+print(device)
+
+# y0的真实值
 true_y0 = torch.tensor([[2., 0.]]).to(device)
+# 时间step
 t = torch.linspace(0., 25., args.data_size).to(device)
+# 真实的系数矩阵
 true_A = torch.tensor([[-0.1, 2.0], [-2.0, -0.1]]).to(device)
 
 
 class Lambda(nn.Module):
-
+    # 根据y计算Ay**3
     def forward(self, t, y):
         return torch.mm(y**3, true_A)
 
-
+# 将lambda函数 IVP t输入odeint得到真实值的轨迹
 with torch.no_grad():
     true_y = odeint(Lambda(), true_y0, t, method='dopri5')
 
 
 def get_batch():
-    s = torch.from_numpy(np.random.choice(np.arange(args.data_size - args.batch_time, dtype=np.int64), args.batch_size, replace=False))
+    # data size 1000, batch time 10, batch size 20
+    s = torch.from_numpy(np.random.choice(np.arange(args.data_size - args.batch_time, dtype=np.int64), 
+                                          args.batch_size, replace=False))
     batch_y0 = true_y[s]  # (M, D)
     batch_t = t[:args.batch_time]  # (T)
     batch_y = torch.stack([true_y[s + i] for i in range(args.batch_time)], dim=0)  # (T, M, D)
@@ -71,12 +78,12 @@ def visualize(true_y, pred_y, odefunc, itr):
         ax_traj.cla()
         ax_traj.set_title('Trajectories')
         ax_traj.set_xlabel('t')
-        ax_traj.set_ylabel('x,y')
+        ax_traj.set_ylabel('x1,x2')
         ax_traj.plot(t.cpu().numpy(), true_y.cpu().numpy()[:, 0, 0], t.cpu().numpy(), true_y.cpu().numpy()[:, 0, 1], 'g-')
         ax_traj.plot(t.cpu().numpy(), pred_y.cpu().numpy()[:, 0, 0], '--', t.cpu().numpy(), pred_y.cpu().numpy()[:, 0, 1], 'b--')
         ax_traj.set_xlim(t.cpu().min(), t.cpu().max())
         ax_traj.set_ylim(-2, 2)
-        ax_traj.legend()
+        ax_traj.legend(labels=['groud truth x1', 'groud truth x2', 'predict model x1', 'predict model x2'])
 
         ax_phase.cla()
         ax_phase.set_title('Phase Portrait')
@@ -125,7 +132,7 @@ class ODEFunc(nn.Module):
                 nn.init.constant_(m.bias, val=0)
 
     def forward(self, t, y):
-        return self.net(y**3)
+        return self.net(y**3) # 学习系数矩阵A
 
 
 class RunningAverageMeter(object):
@@ -150,7 +157,8 @@ class RunningAverageMeter(object):
 if __name__ == '__main__':
 
     ii = 0
-
+    
+    # 训练ODE function
     func = ODEFunc().to(device)
     
     optimizer = optim.RMSprop(func.parameters(), lr=1e-3)
